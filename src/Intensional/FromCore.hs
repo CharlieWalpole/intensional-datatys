@@ -57,7 +57,7 @@ consInstArgs x as k = mapM fromCoreInst (dataConRepArgTys k)
           do  b <- isIneligible d
               if b then Data (Base d) <$> (mapM fromCoreInst as') 
                    else Data (Inj x d) <$> (mapM fromCoreInst as')
-    fromCoreInst (Tcr.FunTy a b) = (:=>) <$> fromCoreInst a <*> fromCoreInst b
+    fromCoreInst (Tcr.FunTy _ a b) = (:=>) <$> fromCoreInst a <*> fromCoreInst b
     fromCoreInst (Tcr.LitTy l) = return (Lit $ toIfaceTyLit l)
     fromCoreInst _ = return Ambiguous
 
@@ -83,7 +83,7 @@ fromCore (Just x) (Tcr.TyConApp d as) = do
     Data (Base d) <$> mapM (fromCore (Just x)) as
   else
     Data (Inj x d) <$> mapM (fromCore (Just x)) as
-fromCore f (Tcr.FunTy a b) = liftM2 (:=>) (fromCore f a) (fromCore f b)
+fromCore f (Tcr.FunTy _ a b) = liftM2 (:=>) (fromCore f a) (fromCore f b)
 fromCore _ (Tcr.LitTy l) = return $ Lit $ toIfaceTyLit l
 fromCore _ _ = return Ambiguous -- Higher-ranked or impredicative types, casts and coercions
 
@@ -93,7 +93,7 @@ fromCoreScheme f (Tcr.ForAllTy b t) = do
   a <- getExternalName (Tcr.binderVar b)
   scheme <- fromCoreScheme f t
   return scheme {tyvars = a : tyvars scheme}
-fromCoreScheme f (Tcr.FunTy a b) = do
+fromCoreScheme f (Tcr.FunTy _ a b) = do
   a' <- fromCore f a
   scheme <- fromCoreScheme f b -- Optimistically push arrows inside univiersal quantifier
   return scheme {body = a' :=> body scheme}

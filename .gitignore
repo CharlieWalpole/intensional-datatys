@@ -10,3 +10,5 @@ benchmarks/
 profile.*
 *.hi
 *.o
+*.lock
+.stack-work/*
