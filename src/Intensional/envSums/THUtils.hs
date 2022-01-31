@@ -19,3 +19,4 @@ lookupTHName failAction thn = thNameToGhcName thn >>= \case
 --From: https://ocramz.github.io/haskell/ghc/metaprogramming/2021/06/22/finding-core-th.html
 lookupNameInGuts :: ModGuts -> Name -> Maybe (Var, CoreExpr)
 lookupNameInGuts guts n = listToMaybe [ (v,e) | (v,e) <- flattenBinds (mg_binds guts) , getName v == n ]
+

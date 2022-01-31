@@ -1,6 +1,11 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
+-- {-# LANGUAGE CPP, DataKinds, GADTs, KindSignatures, ScopedTypeVariables, TypeOperators,
+--             TypeApplications, TypeFamilies, TypeFamilyDependencies, FlexibleContexts, PolyKinds #-}
 
 module Intensional.Types
   ( RVar,
@@ -24,6 +29,9 @@ import Data.Map (Map)
 import GHC.Generics hiding (prec)
 import GhcPlugins hiding ((<>), Expr (..), Type)
 import IfaceType
+import Data.Sized hiding ((++), empty)
+import qualified Data.Sized as S
+import Intensional.EnvSums.AnnoEnv (concatThroughMonad)
 
 type RVar = Int
 
@@ -90,58 +98,58 @@ tyconOf :: DataType d -> d
 tyconOf (Base d) = d
 tyconOf (Inj _ d) = d
 
-type Type = TypeGen TyCon
+type Type n = TypeGen n TyCon
 
 -- Monomorphic types parameterised by type constructors
-data TypeGen d
+data TypeGen n d
   = Var Name
-  | App (TypeGen d) (TypeGen d)
-  | Data (DataType d) [TypeGen d]
-  | TypeGen d :=> TypeGen d
+  | App (TypeGen n d) (TypeGen n d)
+  | Data (Sized [] n (DataType d)) (Sized [] n [TypeGen n d])
+  | TypeGen n d :=> TypeGen n d
   | Lit IfaceTyLit
   | Ambiguous -- Ambiguous hides higher-ranked types and casts
   deriving (Functor, Foldable, Traversable)
 
 -- Clone of a Outputable Core.Type
-instance Outputable d => Outputable (TypeGen d) where
+instance Outputable d => Outputable (TypeGen n d) where
   ppr = prpr ppr
-      
-instance Binary d => Binary (TypeGen d) where
+
+instance (Binary d) => Binary (TypeGen 1 d) where
   put_ bh (Var a) = put_ bh (0 :: Int) >> put_ bh a
   put_ bh (App a b) = put_ bh (1 :: Int) >> put_ bh a >> put_ bh b
-  put_ bh (Data d as) = put_ bh (2 :: Int) >> put_ bh d >> put_ bh as
+  put_ bh (Data d as) = put_ bh (2 :: Int) >> put_ bh (d S.!! 0) >> put_ bh (as S.!! 0)
   put_ bh (a :=> b) = put_ bh (3 :: Int) >> put_ bh a >> put_ bh b
   put_ bh (Lit l) = put_ bh (4 :: Int) >> put_ bh l
   put_ bh Ambiguous = put_ bh (5 :: Int)
 
   get bh = do
-    n <- get bh
-    case n :: Int of
+    c <- get bh
+    case c :: Int of
       0 -> Var <$> get bh
       1 -> App <$> get bh <*> get bh
-      2 -> Data <$> get bh <*> get bh
+      2 -> Data <$> (unsafeFromList' <$> get bh) <*> ((unsafeFromList' <$>) $ concatThroughMonad [get bh])
       3 -> (:=>) <$> get bh <*> get bh
       4 -> Lit <$> get bh
       5 -> return Ambiguous
-      _ -> pprPanic "Invalid binary file!" $ ppr n
+      _ -> pprPanic "Invalid binary file!" $ ppr c
 
-instance Outputable d => Refined (TypeGen d) where
+instance Outputable d => Refined (TypeGen n d) where
   domain (App a b) = domain a <> domain b
-  domain (Data d as) = domain d <> foldMap domain as
+  domain (Data d as) = foldMap domain d <> foldMap (foldMap domain) as
   domain (a :=> b) = domain a <> domain b
   domain _ = mempty
 
   rename x y (App a b) = App (rename x y a) (rename x y b)
-  rename x y (Data d as) = Data (rename x y d) (rename x y <$> as)
+  rename x y (Data d as) = Data (fmap (rename x y) d) (fmap (rename x y <$>) as)
   rename x y (a :=> b) = rename x y a :=> rename x y b
   rename _ _ t = t
 
   prpr m = pprTy topPrec
     where
-      pprTy :: Outputable d => PprPrec -> TypeGen d -> SDoc
+      pprTy :: Outputable d => PprPrec -> TypeGen n d -> SDoc
       pprTy _ (Var a) = ppr a
       pprTy prec (App t1 t2) = hang (pprTy prec t1) 2 (pprTy appPrec t2)
-      pprTy _ (Data d as) = hang (prpr m d) 2 $ sep [hcat [text "@", pprTy appPrec a] | a <- as]
+      pprTy _ (Data d as) = hang (hcat (prpr m <$> (toList d))) 2 $ sep [hcat $ [text "@"] ++ fmap (pprTy appPrec) a | a <- (toList as)]
       pprTy prec (t1 :=> t2) = maybeParen prec funPrec $ sep [pprTy funPrec t1, arrow, pprTy prec t2]
       pprTy _ (Lit l) = ppr l
       pprTy _ Ambiguous = text "<?>"
@@ -157,24 +165,24 @@ instance Outputable d => Refined (TypeGen d) where
 -- inj _ Ambiguous = Ambiguous
 
 -- Decompose a functions into its arguments and eventual return type
-decompType :: TypeGen d -> ([TypeGen d], TypeGen d)
+decompType :: TypeGen n d -> ([TypeGen n d], TypeGen n d)
 decompType (a :=> b) = first (++ [a]) (decompType b)
 decompType a = ([], a)
 
 -- Type variable substitution
-subTyVar :: Outputable d => Name -> TypeGen d -> TypeGen d -> TypeGen d
+subTyVar :: Outputable d => Name -> TypeGen n d -> TypeGen n d -> TypeGen n d
 subTyVar a t (Var a')
   | a == a' = t
   | otherwise = Var a'
 subTyVar a t (App x y) = applyType (subTyVar a t x) (subTyVar a t y)
-subTyVar a t (Data d as) = Data d (subTyVar a t <$> as)
+subTyVar a t (Data d as) = Data d (fmap (subTyVar a t <$>) as)
 subTyVar a t (x :=> y) = subTyVar a t x :=> subTyVar a t y
 subTyVar _ _ t = t
 
 -- Unsaturated type application
-applyType :: Outputable d => TypeGen d -> TypeGen d -> TypeGen d
+applyType :: Outputable d => TypeGen n d -> TypeGen n d -> TypeGen n d
 applyType (Var a) t = App (Var a) t
 applyType (App a b) t = App (App a b) t
-applyType (Data d as) t = Data d (as ++ [t])
+applyType (Data d as) t = Data d (fmap (++ [t]) as)
 applyType Ambiguous _ = Ambiguous
 applyType a b = pprPanic "The type is already saturated!" $ ppr (a, b)

@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DataKinds #-}
 
 module Intensional.FromCore
   ( freshCoreType,
@@ -18,9 +19,10 @@ import Intensional.Scheme as Scheme
 import ToIface
 import qualified TyCoRep as Tcr
 import Intensional.Types
+import qualified Data.Sized as S
 
 -- A fresh monomorphic type
-freshCoreType :: Tcr.Type -> InferM Type
+freshCoreType :: Tcr.Type -> InferM (Type 1)
 freshCoreType = fromCore Nothing
 
 -- A fresh polymorphic type
@@ -39,50 +41,50 @@ fromCoreCons k = do
   fromCoreScheme (Just x) (dataConUserType k)
 
 -- The argument types of an instantiated constructor
-consInstArgs :: RVar -> [Type] -> DataCon -> InferM [Type]
+consInstArgs :: RVar -> [Type 1] -> DataCon -> InferM [Type 1]
 consInstArgs x as k = mapM fromCoreInst (dataConRepArgTys k)
   where
-    fromCoreInst :: Tcr.Type -> InferM Type
+    fromCoreInst :: Tcr.Type -> InferM (Type 1)
     fromCoreInst (Tcr.TyVarTy a) =
-      case lookup a (zip (dataConUnivTyVars k) as) of
+      case lookup a (Prelude.zip (dataConUnivTyVars k) as) of
         Nothing -> return (Var (getName a))
         Just t -> return t
     fromCoreInst (Tcr.AppTy a b) = App <$> (fromCoreInst a) <*> (fromCoreInst b)
     fromCoreInst (Tcr.TyConApp d as')
       | isTypeSynonymTyCon d,
         Just (as'', s) <- synTyConDefn_maybe d =
-        fromCoreInst (substTy (extendTvSubstList emptySubst (zip as'' as')) s) -- Instantiate type synonym arguments
+        fromCoreInst (substTy (extendTvSubstList emptySubst (Prelude.zip as'' as')) s) -- Instantiate type synonym arguments
       | isClassTyCon d = return Ambiguous -- Disregard type class evidence
       | otherwise =
           do  b <- isIneligible d
-              if b then Data (Base d) <$> (mapM fromCoreInst as') 
-                   else Data (Inj x d) <$> (mapM fromCoreInst as')
+              if b then (Data (S.singleton $ Base d)) . S.singleton <$> (mapM fromCoreInst as') 
+                   else (Data (S.singleton $ Inj x d)) . S.singleton <$> (mapM fromCoreInst as')
     fromCoreInst (Tcr.FunTy _ a b) = (:=>) <$> fromCoreInst a <*> fromCoreInst b
     fromCoreInst (Tcr.LitTy l) = return (Lit $ toIfaceTyLit l)
     fromCoreInst _ = return Ambiguous
 
 -- Convert a monomorphic core type
-fromCore :: Maybe RVar -> Tcr.Type -> InferM Type
+fromCore :: Maybe RVar -> Tcr.Type -> InferM (Type 1)
 fromCore _ (Tcr.TyVarTy a) = Var <$> getExternalName a
 fromCore f (Tcr.AppTy a b) = liftM2 App (fromCore f a) (fromCore f b)
 fromCore f (Tcr.TyConApp d as)
   | isTypeSynonymTyCon d,
     Just (as', s) <- synTyConDefn_maybe d =
-    fromCore f (substTy (extendTvSubstList emptySubst (zip as' as)) s) -- Instantiate type synonyms
+    fromCore f (substTy (extendTvSubstList emptySubst (Prelude.zip as' as)) s) -- Instantiate type synonyms
   | isClassTyCon d = return Ambiguous -- Disregard type class evidence
 fromCore Nothing (Tcr.TyConApp d as) = do
   x <- fresh
   b <- isIneligible d
   if b then
-    Data (Base d) <$> mapM (fromCore Nothing) as
+    (Data (S.singleton $ Base d)) . S.singleton <$> mapM (fromCore Nothing) as
   else
-    Data (Inj x d) <$> mapM (fromCore Nothing) as
+    (Data (S.singleton $ Inj x d)) . S.singleton <$> mapM (fromCore Nothing) as
 fromCore (Just x) (Tcr.TyConApp d as) = do
   b <- isIneligible d
   if b then
-    Data (Base d) <$> mapM (fromCore (Just x)) as
+    (Data (S.singleton $ Base d)) . S.singleton <$> mapM (fromCore (Just x)) as
   else
-    Data (Inj x d) <$> mapM (fromCore (Just x)) as
+    (Data (S.singleton $ Inj x d)) . S.singleton <$> mapM (fromCore (Just x)) as
 fromCore f (Tcr.FunTy _ a b) = liftM2 (:=>) (fromCore f a) (fromCore f b)
 fromCore _ (Tcr.LitTy l) = return $ Lit $ toIfaceTyLit l
 fromCore _ _ = return Ambiguous -- Higher-ranked or impredicative types, casts and coercions
@@ -122,9 +124,12 @@ getVar v =
       return var_scheme
 
 -- Maximise/minimise a library type, i.e. assert every constructor occurs in covariant positions
-maximise :: Bool -> Type -> InferM ()
-maximise True (Data (Inj x d) _) = do
-  l <- asks inferLoc
-  mapM_ (\k -> emitKD k l (Inj x d)) $ tyConDataCons d
+maximise :: Bool -> Type 1 -> InferM ()
+maximise True (Data xs _) = 
+  case xs S.!! 0 of
+    Base _ -> return ()
+    Inj x d -> do
+      l <- asks inferLoc
+      mapM_ (\k -> emitKD k l (Inj x d)) $ tyConDataCons d
 maximise b (x :=> y) = maximise (not b) x >> maximise b y
 maximise _ _ = return ()

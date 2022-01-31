@@ -1,5 +1,6 @@
 module Intensional.EnvSums.AnnoEnv (
-        getTyAnnotationExprsOfType
+        getTyAnnotationExprsOfType,
+        concatThroughMonad
     ) where
 
 import GhcPlugins hiding (putMsg)
