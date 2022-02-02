@@ -128,7 +128,7 @@ inferSubType t1 t2 =
     inferSubTypeStep _ _ = []
 
 -- Infer constraints for a module
-inferProg :: CoreProgram -> InferM Context
+inferProg :: CoreProgram -> InferM (Context 1)
 inferProg [] = return M.empty
 inferProg (r : rs) =
   do  let bs = map occName $ bindersOf r 
@@ -137,7 +137,7 @@ inferProg (r : rs) =
       return (ctxs <> ctx)
 
 -- Infer a set of constraints and associate them to qualified type scheme
-associate :: CoreBind -> InferM Context
+associate :: CoreBind -> InferM (Context 1)
 associate r = 
     setLoc (UnhelpfulSpan (mkFastString ("Top level " ++ bindingNames))) doAssoc
   where 
@@ -165,8 +165,8 @@ associate r =
           return ctx'
 
 -- Infer constraints for a mutually recursive binders
-inferRec :: CoreBind -> InferM Context
-inferRec (NonRec x e) = M.singleton (getName x) <$> infer e
+inferRec :: CoreBind -> InferM (Context 1)
+inferRec (NonRec x e) = M.singleton (S.singleton $ getName x) <$> infer e
 inferRec (Rec xes) = do
   binds <-
     sequence
@@ -179,7 +179,7 @@ inferRec (Rec xes) = do
         )
         <$> xes
   -- Add binds for recursive calls
-  putVars (fmap snd binds) $
+  (putVars (M.mapKeys S.singleton $ fmap snd binds)) . (fmap (M.mapKeys S.singleton)) $
     traverse
       ( \(e, rec_scheme) -> do
           scheme <- infer e
@@ -192,7 +192,7 @@ inferRec (Rec xes) = do
       binds
 
 -- Infer constraints for a program expression
-infer :: CoreExpr -> InferM Scheme
+infer :: CoreExpr -> InferM (Scheme 1)
 infer (Core.Var v) =
   -- Check if identifier is a constructor
   case isDataConId_maybe v of
@@ -256,7 +256,7 @@ infer (Core.Case e bind_e core_ret alts) = saturate $ do
                         Base _  -> M.fromList . zip (fmap getName xs) <$> (map (Forall []) <$> (consInstArgs y (as S.!! 0) k))
                     branchAny [k] dt $ do
                       -- Ensure return type is valid
-                      ret_i <- mono <$> putVars ts (infer rhs)
+                      ret_i <- mono <$> putVars (M.mapKeys S.singleton ts) (infer rhs)
                       inferSubType ret_i ret
                     -- Record constructorsc
                     return (Just k)
@@ -288,7 +288,7 @@ infer (Core.Case e bind_e core_ret alts) = saturate $ do
                   do -- Add constructor arguments introduced by the pattern
                     ts <- sequence $ M.fromList $ zip (fmap getName xs) (fmap (freshCoreScheme . varType) xs)
                     -- Ensure return type is valid
-                    ret_i <- mono <$> putVars ts (infer rhs)
+                    ret_i <- mono <$> putVars (M.mapKeys S.singleton ts) (infer rhs)
                     inferSubType ret_i ret
             )
             alts

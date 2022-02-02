@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE DataKinds #-}
 
 module Intensional (plugin, Benchmark(..)) where
 
@@ -32,6 +33,7 @@ import NameCache (OrigNameCache)
 import GHC.Generics (Generic)
 import System.IO
 import qualified System.Console.Haskeline as Haskeline
+import qualified Data.Sized as S
 
 {-|
   The GHC plugin is hardwired as @plugin@.  
@@ -80,7 +82,7 @@ inferGuts cmd guts@ModGuts {mg_deps = d, mg_module = m, mg_binds = p} = do
               if exists
                 then do
                   bh <- liftIO $ readBinMem m_name
-                  ictx <- liftIO $ Map.fromList <$> getWithUserData cache bh
+                  ictx <- liftIO $ Map.fromList . map (\(l, r) -> (S.singleton l, r)) <$> getWithUserData cache bh
                   ctx <- mapM (mapM tcIfaceTyCon) ictx
                   return (Map.union ctx env)
                 else return env
@@ -106,7 +108,7 @@ inferGuts cmd guts@ModGuts {mg_deps = d, mg_module = m, mg_binds = p} = do
     putWithUserData
       (const $ return ())
       bh
-      (Map.toList $ Map.filterWithKey (\k _ -> isExternalName k) (fmap toIfaceTyCon <$> gamma))
+      (Map.toList . (Map.mapKeys (S.!! 0)) $ Map.filterWithKey (\k _ -> isExternalName (k S.!! 0)) (fmap toIfaceTyCon <$> gamma))
     writeBinMem bh (interfaceName (moduleName m))
     return guts
 
@@ -116,7 +118,7 @@ inferGuts cmd guts@ModGuts {mg_deps = d, mg_module = m, mg_binds = p} = do
   @repl cx md ch@ is a read-eval-print-loop IO action, allowing the 
   user to inspect individual type bindings and output the raw core.
 -}
-repl :: Context -> Module -> CoreProgram -> OrigNameCache -> IO ()
+repl :: Context 1 -> Module -> CoreProgram -> OrigNameCache -> IO ()
 repl cx md pr ch =
   Haskeline.runInputT Haskeline.defaultSettings loop
   where
@@ -132,7 +134,7 @@ repl cx md pr ch =
                   loop
             Just [":t", strName] ->
               do  case mkName strName of
-                    Just n | Just ts <- Map.lookup n cx -> 
+                    Just n | Just ts <- Map.lookup (S.singleton n) cx -> 
                       Haskeline.outputStrLn $ showSDocUnsafe $ typingDoc n ts
                     _                                    -> return ()
                   loop

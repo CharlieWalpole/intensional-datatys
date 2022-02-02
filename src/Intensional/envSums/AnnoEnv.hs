@@ -1,17 +1,21 @@
 module Intensional.EnvSums.AnnoEnv (
-        getTyAnnotationExprsOfType,
+        getConstructorTypings,
         concatThroughMonad
     ) where
 
 import GhcPlugins hiding (putMsg)
 import Data.Data (Data(..))
+import Intensional.EnvSums.AnnoRep
 
-
+type AnnoType = AExpr ConstructorTyping
 data AExpr a = AExpr Name [a]
 
 instance Show a => Show (AExpr a) where
     show (AExpr n xs) = "AExpr " ++ nameStableString n ++ show xs
 
+
+getConstructorTypings :: ModGuts -> CoreM [AnnoType]
+getConstructorTypings = getTyAnnotationExprsOfType
 
 -- Gets all expressions of type 'a' from the type annotations in the current module
 -- Intended to be used like: (getTyAnnotationExprsOfType guts) :: CoreM [String]
@@ -34,6 +38,9 @@ annotationsOn guts name = do
 -- Generalisation of [CoreM [a]] -> CoreM [a] function.
 concatThroughMonad :: (Monad n, Foldable m, Monoid (m a)) => m (n (m a)) -> n (m a)
 concatThroughMonad ms = foldl (\n1 n2 -> n1 >>= \x -> fmap (mappend x) n2) (return mempty) ms
+
+
+
 
 {-
 -- Prints given string to console

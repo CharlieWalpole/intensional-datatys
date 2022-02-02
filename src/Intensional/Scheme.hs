@@ -19,7 +19,7 @@ import qualified Data.IntMap as IntMap
 import GhcPlugins 
 import Intensional.Types
 
-type Scheme = SchemeGen 1 TyCon
+type Scheme n = SchemeGen n TyCon
 
 -- Constrained polymorphic types
 data SchemeGen n d
@@ -90,5 +90,5 @@ mono _ = Ambiguous
     Given a scheme @s@, @unsats s@ is the constraint set containing
     just the trivially unsatisfiable constraints associated with @s@.
 -}
-unsats :: Scheme -> ConstraintSet
+unsats :: Scheme n -> ConstraintSet
 unsats s = Constraints.unsats (constraints s)

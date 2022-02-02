@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DataKinds #-}
 
 module Intensional.InferM
   ( InferM,
@@ -36,15 +37,17 @@ import Intensional.Scheme
 import Intensional.Types
 import Intensional.Ubiq
 import Intensional.Guard
+import Data.Sized(Sized)
+import qualified Data.Sized as S
 
 type InferM = RWS InferEnv ConstraintSet InferState
 
-type Context = M.Map Name Scheme
+type Context n = M.Map (Sized [] n Name) (Scheme n)
 
 data InferEnv
   = InferEnv
       { modName :: Module, -- The current module
-        varEnv :: Context,
+        varEnv :: Context 1,
         inferLoc :: SrcSpan -- The current location in the source text
       }
 
@@ -96,7 +99,7 @@ data Stats =
 runInferM ::
   InferM a ->
   Module ->
-  Context ->
+  Context 1 ->
   (a, [Atomic], Stats)
 runInferM run mod_name init_env =
   let (a, s, _) = runRWS run (InferEnv mod_name init_env (UnhelpfulSpan (mkFastString "Nowhere"))) initState
@@ -228,10 +231,10 @@ fresh = do
   return i
 
 -- Insert variables into environment
-putVar :: Name -> Scheme -> InferM a -> InferM a
-putVar n s = local (\env -> env {varEnv = M.insert n s (varEnv env)})
+putVar :: Name -> Scheme 1 -> InferM a -> InferM a
+putVar n s = local (\env -> env {varEnv = M.insert (S.singleton n) s (varEnv env)})
 
-putVars :: Context -> InferM a -> InferM a
+putVars :: Context 1 -> InferM a -> InferM a
 putVars ctx = local (\env -> env {varEnv = M.union ctx (varEnv env)})
 
 -- Add source text location tick

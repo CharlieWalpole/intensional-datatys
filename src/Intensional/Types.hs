@@ -104,7 +104,7 @@ type Type n = TypeGen n TyCon
 data TypeGen n d
   = Var Name
   | App (TypeGen n d) (TypeGen n d)
-  | Data (Sized [] n (DataType d)) (Sized [] n [TypeGen n d])
+  | Data (Sized [] n (DataType d)) (Sized [] n [TypeGen 1 d])
   | TypeGen n d :=> TypeGen n d
   | Lit IfaceTyLit
   | Ambiguous -- Ambiguous hides higher-ranked types and casts
@@ -170,7 +170,7 @@ decompType (a :=> b) = first (++ [a]) (decompType b)
 decompType a = ([], a)
 
 -- Type variable substitution
-subTyVar :: Outputable d => Name -> TypeGen n d -> TypeGen n d -> TypeGen n d
+subTyVar :: Outputable d => Name -> TypeGen 1 d -> TypeGen 1 d -> TypeGen 1 d
 subTyVar a t (Var a')
   | a == a' = t
   | otherwise = Var a'
@@ -180,7 +180,7 @@ subTyVar a t (x :=> y) = subTyVar a t x :=> subTyVar a t y
 subTyVar _ _ t = t
 
 -- Unsaturated type application
-applyType :: Outputable d => TypeGen n d -> TypeGen n d -> TypeGen n d
+applyType :: Outputable d => TypeGen 1 d -> TypeGen 1 d -> TypeGen 1 d
 applyType (Var a) t = App (Var a) t
 applyType (App a b) t = App (App a b) t
 applyType (Data d as) t = Data d (fmap (++ [t]) as)

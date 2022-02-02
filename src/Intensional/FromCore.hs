@@ -26,11 +26,11 @@ freshCoreType :: Tcr.Type -> InferM (Type 1)
 freshCoreType = fromCore Nothing
 
 -- A fresh polymorphic type
-freshCoreScheme :: Tcr.Type -> InferM Scheme
+freshCoreScheme :: Tcr.Type -> InferM (Scheme 1)
 freshCoreScheme = fromCoreScheme Nothing
 
 -- The type of a constructor injected into a fresh refinement environment
-fromCoreCons :: DataCon -> InferM Scheme
+fromCoreCons :: DataCon -> InferM (Scheme 1)
 fromCoreCons k = do
   x <- fresh
   let d = dataConTyCon k
@@ -90,7 +90,7 @@ fromCore _ (Tcr.LitTy l) = return $ Lit $ toIfaceTyLit l
 fromCore _ _ = return Ambiguous -- Higher-ranked or impredicative types, casts and coercions
 
 -- Convert a polymorphic core type
-fromCoreScheme :: Maybe RVar -> Tcr.Type -> InferM Scheme
+fromCoreScheme :: Maybe RVar -> Tcr.Type -> InferM (Scheme 1)
 fromCoreScheme f (Tcr.ForAllTy b t) = do
   a <- getExternalName (Tcr.binderVar b)
   scheme <- fromCoreScheme f t
@@ -102,9 +102,9 @@ fromCoreScheme f (Tcr.FunTy _ a b) = do
 fromCoreScheme f t = Forall [] <$> fromCore f t
 
 -- Lookup constrained variable and emit its constraints
-getVar :: Var -> InferM Scheme
+getVar :: Var -> InferM (Scheme 1)
 getVar v =
-  asks (M.lookup (getName v) . varEnv) >>= \case
+  asks (M.lookup (S.singleton $ getName v) . varEnv) >>= \case
     Just scheme -> do
       -- Localise constraints
       fre_scheme <-
