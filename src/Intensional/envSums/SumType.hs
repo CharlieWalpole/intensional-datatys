@@ -1,5 +1,6 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs, RankNTypes, QuantifiedConstraints #-}
 
 module Intensional.EnvSums.SumType where
 
@@ -11,6 +12,7 @@ import Outputable
 import Data.Sized(Sized)
 import qualified Data.Sized as S
 import GHC.TypeNats
+import qualified GHC.TypeNats as TN 
 import Intensional.InferM(Context)
 import GHC (Name)
 
