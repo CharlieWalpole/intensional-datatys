@@ -1,7 +1,5 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleInstances #-}
 
 module Intensional.Scheme
   ( Scheme,
@@ -19,35 +17,36 @@ import qualified Data.IntMap as IntMap
 import GhcPlugins 
 import Intensional.Types
 
-type Scheme n = SchemeGen n TyCon
+type Scheme = SchemeGen TyCon
+
 
 -- Constrained polymorphic types
-data SchemeGen n d
+data SchemeGen d
   = Scheme
       { tyvars :: [Name],
         boundvs :: Domain,
-        body :: TypeGen n d,
+        body :: TypeGen d,
         constraints :: ConstraintSet
       }
   deriving (Functor, Foldable, Traversable)
 
 {-# COMPLETE Forall #-}
 
-pattern Forall :: [Name] -> TypeGen n d -> SchemeGen n d
+pattern Forall :: [Name] -> TypeGen d -> SchemeGen d
 pattern Forall as t <-
   Scheme as _ t _
   where
     Forall as t = Scheme as mempty t mempty
 
-instance Outputable d => Outputable (SchemeGen n d) where
+instance Outputable d => Outputable (SchemeGen d) where
   ppr = prpr ppr
 
-instance Binary d => Binary (SchemeGen 1 d) where
+instance Binary d => Binary (SchemeGen d) where
   put_ bh (Scheme as bs t cs) = put_ bh as >> put_ bh (I.toList bs) >> put_ bh t >> put_ bh cs
 
   get bh = Scheme <$> get bh <*> (I.fromList <$> get bh) <*> get bh <*> get bh
 
-instance Outputable d => Refined (SchemeGen n d) where
+instance Outputable d => Refined (SchemeGen d) where
   domain s = (domain (body s) Prelude.<> domain (constraints s)) I.\\ boundvs s
 
   rename x y s
@@ -82,7 +81,7 @@ instance Outputable d => Refined (SchemeGen n d) where
         | otherwise = hcat [forAllLit <+> fsep (map varMap $ I.toList (boundvs scheme)), dot]
 
 -- Demand a monomorphic type
-mono :: SchemeGen n d -> TypeGen n d
+mono :: SchemeGen d -> TypeGen d
 mono (Forall [] t) = t
 mono _ = Ambiguous
 

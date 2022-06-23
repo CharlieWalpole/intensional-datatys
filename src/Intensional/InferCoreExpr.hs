@@ -1,5 +1,4 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE DataKinds #-}
 
 module Intensional.InferCoreExpr
   ( inferProg,
@@ -23,7 +22,6 @@ import Pair
 import Intensional.Scheme as Scheme
 import Intensional.Guard as Guard
 import Intensional.Types
-import qualified Data.Sized as S
 
 import qualified Intensional.Constraints as Constraints
 
@@ -48,7 +46,7 @@ type SubTyAtom = (Guard, RVar, RVar, TyCon)
     the constraint.  This additional information is needed to unfold the 
     frontier and look for successors.
 -}
-type SubTyFrontierAtom = (Guard, RVar, RVar, TyCon, [Type 1], [Type 1])
+type SubTyFrontierAtom = (Guard, RVar, RVar, TyCon, [Type], [Type])
 
 {-|
     The type of the subtype inference algorithm, i.e. a stateful fixed 
@@ -63,7 +61,7 @@ type SubTyComputation = StateT ([SubTyFrontierAtom], [SubTyAtom]) InferM ()
 
     Also emits statistics on the size of the input parameters to do with slices.
 -}
-inferSubType :: Type 1 -> Type 1 -> InferM ()
+inferSubType :: Type -> Type -> InferM ()
 inferSubType t1 t2 = 
   do  let ts = inferSubTypeStep t1 t2
       (_,cs) <- listen $
@@ -112,19 +110,15 @@ inferSubType t1 t2 =
                 inferSubTypeFix
 
 
-    inferSubTypeStep ::  Type 1 -> Type 1 -> [(RVar, RVar, TyCon, [Type 1], [Type 1])]
-    inferSubTypeStep (Data ds as) (Data ds' as') =
-      case ds S.!! 0 of
-        Base _ -> case ds' S.!! 0 of
-          Base _ -> concat $ zipWith inferSubTypeStep (as S.!! 0) (as' S.!! 0)
-          Inj _ _ -> []
-        Inj x d -> case ds' S.!! 0 of
-          Base _ -> []
-          Inj y _ -> [(x, y, d, as S.!! 0, as' S.!! 0)]
+    inferSubTypeStep ::  Type -> Type -> [(RVar, RVar, TyCon, [Type], [Type])]
+    inferSubTypeStep (Data (Inj x d) as) (Data (Inj y _) as') =
+      [(x, y, d, as, as')]
     inferSubTypeStep (t11 :=> t12) (t21 :=> t22) =
       let ds1 = inferSubTypeStep t21 t11 
           ds2 = inferSubTypeStep t12 t22
       in ds1 ++ ds2
+    inferSubTypeStep (Data (Base _) as) (Data (Base _) as') =
+      concat $ zipWith inferSubTypeStep as as'
     inferSubTypeStep _ _ = []
 
 -- Infer constraints for a module
@@ -241,8 +235,7 @@ infer (Core.Case e bind_e core_ret alts) = saturate $ do
   -- Add the variable under scrutinee to scope
   putVar (getName bind_e) (Forall [] t0) $
     case t0 of
-      Data dt' as -> do
-        let dt = dt' S.!! 0
+      Data dt as -> do
         ks <-
           mapMaybeM
             ( \case
@@ -252,8 +245,8 @@ infer (Core.Case e bind_e core_ret alts) = saturate $ do
                     y <- fresh -- only used in Base case of ts
                     ts <- 
                       case dt of 
-                        Inj x _ -> M.fromList . zip (fmap getName xs) <$> (map (Forall []) <$> (consInstArgs x (as S.!! 0) k))
-                        Base _  -> M.fromList . zip (fmap getName xs) <$> (map (Forall []) <$> (consInstArgs y (as S.!! 0) k))
+                        Inj x _ -> M.fromList . zip (fmap getName xs) <$> (map (Forall []) <$> (consInstArgs x as k))
+                        Base _  -> M.fromList . zip (fmap getName xs) <$> (map (Forall []) <$> (consInstArgs y as k))
                     branchAny [k] dt $ do
                       -- Ensure return type is valid
                       ret_i <- mono <$> putVars (M.mapKeys S.singleton ts) (infer rhs)
