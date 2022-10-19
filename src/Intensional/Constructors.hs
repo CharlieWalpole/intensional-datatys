@@ -39,7 +39,7 @@ data Side = L | R
 -- the same constructor in different program
 -- locations are treated seperately.
 data K (s :: Side) where
-  Dom :: DataType Name -> K s
+  Dom :: DataType Name Name -> K s
   Con :: Name -> SrcSpan -> K 'L
   Set :: UniqSet Name -> SrcSpan -> K 'R
 
@@ -61,7 +61,7 @@ instance Hashable (K s) where
   hashWithSalt s (Set ks _) = hashWithSalt s (nonDetKeysUniqSet ks)
 
 instance Outputable (K s) where
-  ppr = prpr ppr
+  ppr = prpr ppr ppr
 
 instance Binary (K 'L) where
   put_ bh (Dom d) = put_ bh False >> put_ bh d
@@ -91,10 +91,10 @@ instance Refined (K l) where
   rename x y (Dom d) = Dom (rename x y d)
   rename _ _ s = s
 
-  prpr m (Dom (Inj x d)) = m x GhcPlugins.<> parens (ppr d)
-  prpr _ (Dom (Base _))  = error "Base in constraint."
-  prpr _ (Con k _) = ppr k
-  prpr _ (Set ks _) = hcat [char '{', pprWithBars ppr (nonDetEltsUniqSet ks), char '}']
+  prpr m _ (Dom (Inj x d)) = m x GhcPlugins.<> parens (ppr d)
+  prpr _ _ (Dom (Base _))  = error "Base in constraint."
+  prpr _ _ (Con k _) = ppr k
+  prpr _ _ (Set ks _) = hcat [char '{', pprWithBars ppr (nonDetEltsUniqSet ks), char '}']
 
 {-|
     Assuming @k@ is either a @Con@ or @Set@ atom, 

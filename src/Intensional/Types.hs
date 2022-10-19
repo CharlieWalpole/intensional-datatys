@@ -24,6 +24,8 @@ import Data.Map (Map)
 import GHC.Generics hiding (prec)
 import GhcPlugins hiding ((<>), Expr (..), Type)
 import IfaceType
+import Intensional.State hiding (Var)
+import qualified Intensional.State as State
 
 type RVar = Int
 
@@ -33,26 +35,26 @@ type Domain = I.IntSet
 class Refined t where
   domain :: t -> Domain
   rename :: RVar -> RVar -> t -> t
-  prpr   :: (RVar -> SDoc) -> t -> SDoc
+  prpr   :: (RVar -> SDoc) -> (SVar -> SDoc) -> t -> SDoc
 
 instance Refined b => Refined (Map a b) where
   domain = foldMap domain
   rename x y = fmap (rename x y)
-  prpr m = foldr (($$) . prpr m) empty
+  prpr m n = foldr (($$) . prpr m n) empty
 
 -- A datatype identifier
 -- d is TyCon, IfaceTyCon or Name
-data DataType d
+data DataType k d
   = Base d
-  | Inj RVar d -- Extended datatypes from the canonical environment
-  deriving (Eq, Functor, Foldable, Generic, Traversable)
+  | Inj RVar (State.State k d) -- Extended datatypes from the canonical environment
+  deriving (Eq, Functor, Generic, Traversable, Foldable)
 
-instance Hashable d => Hashable (DataType d)
+instance (Hashable d, Hashable k) => Hashable (DataType k d)
 
-instance Outputable d => Outputable (DataType d) where
-  ppr = prpr ppr 
+instance (Outputable d, Outputable k) => Outputable (DataType k d) where
+  ppr = prpr ppr ppr
 
-instance Binary d => Binary (DataType d) where
+instance (Binary d, Binary k) => Binary (DataType k d) where
   put_ bh (Base d) = put_ bh False >> put_ bh d
   put_ bh (Inj x d) =  put_ bh True >> put_ bh x >> put_ bh d
   get bh =
@@ -60,7 +62,7 @@ instance Binary d => Binary (DataType d) where
       False -> Base <$> get bh
       True -> Inj <$> get bh <*> get bh
 
-instance Outputable d => Refined (DataType d) where
+instance (Outputable d, Outputable k) => Refined (DataType k d) where
   domain (Base _) = I.empty
   domain (Inj x _) = I.singleton x
 
@@ -68,8 +70,19 @@ instance Outputable d => Refined (DataType d) where
     | x == z = Inj y d
   rename _ _ d = d
 
-  prpr _ (Base d) = ppr d
-  prpr m (Inj x d) = hcat [text "inj_", m x] <+> ppr d
+  prpr _ _ (Base d) = ppr d
+  prpr m _ (Inj x d) = hcat [text "inj_", m x] <+> ppr d
+
+instance (Outputable k, Outputable d) => Refined (State k d) where
+  domain _ = I.empty
+
+  rename _ _ x = x
+
+  prpr _ n (State.Var s u) = text "(" <+> n s <+> text ") with underlying type (" <+> ppr u <+> text ")"
+  prpr m n (State.Delta k i s u) = text "Delta (" <+> ppr k <+> text "), " <+> text (show i) <+> text ", (" <+> prpr m n s <+> text "), with underlying type (" <+> ppr u <+> text ")"
+
+instance (Outputable k, Outputable d) => Outputable (State k d) where
+  ppr = prpr ppr ppr
 
 -- Check if a core datatype contains covariant arguments
 -- covariant :: TyCon -> Bool
@@ -86,27 +99,29 @@ instance Outputable d => Refined (DataType d) where
 
 
 -- Get the tycon from a datatype
-tyconOf :: DataType d -> d
+tyconOf :: DataType k d -> d
 tyconOf (Base d) = d
-tyconOf (Inj _ d) = d
+tyconOf (Inj _ s) = case s of
+  (State.Var _ u) -> u
+  (State.Delta _ _ _ u) -> u
 
 type Type = TypeGen TyCon
 
 -- Monomorphic types parameterised by type constructors
-data TypeGen d
+data TypeGen k d
   = Var Name
-  | App (TypeGen d) (TypeGen d)
-  | Data (DataType d) [TypeGen d]
-  | TypeGen d :=> TypeGen d
+  | App (TypeGen k d) (TypeGen k d)
+  | Data (DataType k d) [TypeGen k d]
+  | TypeGen k d :=> TypeGen k d
   | Lit IfaceTyLit
   | Ambiguous -- Ambiguous hides higher-ranked types and casts
   deriving (Functor, Foldable, Traversable)
 
 -- Clone of a Outputable Core.Type
-instance Outputable d => Outputable (TypeGen d) where
-  ppr = prpr ppr
+instance (Outputable d, Outputable k) => Outputable (TypeGen k d) where
+  ppr = prpr ppr ppr
       
-instance Binary d => Binary (TypeGen d) where
+instance (Binary d, Binary k) => Binary (TypeGen k d) where
   put_ bh (Var a) = put_ bh (0 :: Int) >> put_ bh a
   put_ bh (App a b) = put_ bh (1 :: Int) >> put_ bh a >> put_ bh b
   put_ bh (Data d as) = put_ bh (2 :: Int) >> put_ bh d >> put_ bh as
@@ -125,7 +140,7 @@ instance Binary d => Binary (TypeGen d) where
       5 -> return Ambiguous
       _ -> pprPanic "Invalid binary file!" $ ppr n
 
-instance Outputable d => Refined (TypeGen d) where
+instance (Outputable d, Outputable k) => Refined (TypeGen k d) where
   domain (App a b) = domain a <> domain b
   domain (Data d as) = domain d <> foldMap domain as
   domain (a :=> b) = domain a <> domain b
@@ -136,12 +151,12 @@ instance Outputable d => Refined (TypeGen d) where
   rename x y (a :=> b) = rename x y a :=> rename x y b
   rename _ _ t = t
 
-  prpr m = pprTy topPrec
+  prpr m n = pprTy topPrec
     where
-      pprTy :: Outputable d => PprPrec -> TypeGen d -> SDoc
+      pprTy :: (Outputable d, Outputable k) => PprPrec -> TypeGen k d -> SDoc
       pprTy _ (Var a) = ppr a
       pprTy prec (App t1 t2) = hang (pprTy prec t1) 2 (pprTy appPrec t2)
-      pprTy _ (Data d as) = hang (prpr m d) 2 $ sep [hcat [text "@", pprTy appPrec a] | a <- as]
+      pprTy _ (Data d as) = hang (prpr m n d) 2 $ sep [hcat [text "@", pprTy appPrec a] | a <- as]
       pprTy prec (t1 :=> t2) = maybeParen prec funPrec $ sep [pprTy funPrec t1, arrow, pprTy prec t2]
       pprTy _ (Lit l) = ppr l
       pprTy _ Ambiguous = text "<?>"
@@ -157,12 +172,12 @@ instance Outputable d => Refined (TypeGen d) where
 -- inj _ Ambiguous = Ambiguous
 
 -- Decompose a functions into its arguments and eventual return type
-decompType :: TypeGen d -> ([TypeGen d], TypeGen d)
+decompType :: TypeGen k d -> ([TypeGen k d], TypeGen k d)
 decompType (a :=> b) = first (++ [a]) (decompType b)
 decompType a = ([], a)
 
 -- Type variable substitution
-subTyVar :: Outputable d => Name -> TypeGen d -> TypeGen d -> TypeGen d
+subTyVar :: (Outputable d, Outputable k) => Name -> TypeGen k d -> TypeGen k d -> TypeGen k d
 subTyVar a t (Var a')
   | a == a' = t
   | otherwise = Var a'
@@ -172,7 +187,7 @@ subTyVar a t (x :=> y) = subTyVar a t x :=> subTyVar a t y
 subTyVar _ _ t = t
 
 -- Unsaturated type application
-applyType :: Outputable d => TypeGen d -> TypeGen d -> TypeGen d
+applyType :: (Outputable d, Outputable k) => TypeGen k d -> TypeGen k d -> TypeGen k d
 applyType (Var a) t = App (Var a) t
 applyType (App a b) t = App (App a b) t
 applyType (Data d as) t = Data d (as ++ [t])
